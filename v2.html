@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hugging Face FLUX.1</title>
+    <style>
+        body {
+            background-color: #1E1E1E;
+            color: #E0E0E0;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        #main-container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #1E1E1E;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        textarea, input, button {
+            background-color: #2E2E2E;
+            color: #E0E0E0;
+            border: 1px solid #444444;
+            font-size: 18px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+
+        button:hover {
+            color: #003366;
+        }
+
+        #console-output, #query-input {
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        #console-output {
+            height: 100px;
+            overflow-y: auto;
+        }
+
+        #image-container {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #444444;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .image-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .image-wrapper img {
+            width: 350px;
+            height: 350px;
+            object-fit: contain;
+            cursor: pointer;
+        }
+
+        .button-container {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            gap: 10px;
+        }
+
+        button {
+            height: 60px;
+            flex: 1; /* Все кнопки будут занимать равное пространство */
+            min-width: 150px; /* Минимальная ширина кнопок */
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #api-key-button {
+            min-width: 160px; /* Ширина кнопки с API ключом */
+            flex: none;
+        }
+
+        #translate-button {
+            min-width: 150px; /* Ширина кнопки перевода */
+        }
+
+        .button-text {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .request-count {
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+<div id="main-container">
+    <textarea id="query-input" placeholder="Введите запрос..." rows="4"></textarea>
+    <div class="button-container">
+        <button id="translate-button">
+            <span class="button-text">Перевести</span>
+        </button>
+        <button id="submit-button-schnell">
+            <span class="button-text">Отправить (schnell)</span>
+            <span class="request-count" id="request-count-text-schnell">Ждем: 0</span>
+        </button>
+        <button id="submit-button-dev">
+            <span class="button-text">Отправить (dev)</span>
+            <span class="request-count" id="request-count-text-dev">Ждем: 0</span>
+        </button>
+        <button id="api-key-button">Принять API ключ</button>
+    </div>
+    <div id="image-container"></div>
+    <textarea id="console-output" readonly></textarea>
+</div>
+
+<script>
+    const API_URLS = {
+        schnell: "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+        dev: "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
+    };
+    let API_KEY = localStorage.getItem('api_key') || ""; // Хранение API ключа в localStorage
+    let imageCount = 0;
+    let pendingRequestsCountSchnell = 0;
+    let pendingRequestsCountDev = 0;
+
+    document.getElementById("submit-button-schnell").addEventListener("click", () => {
+        sendRequest("schnell");
+    });
+
+    document.getElementById("submit-button-dev").addEventListener("click", () => {
+        sendRequest("dev");
+    });
+
+    document.getElementById("translate-button").addEventListener("click", async () => {
+        const userInput = document.getElementById("query-input").value;
+        if (!userInput.trim()) {
+            appendToConsole("Пожалуйста, введите текст для перевода.");
+            return;
+        }
+
+        appendToConsole(`Перевод текста: "${userInput}"...`);
+
+        const translatedText = await translateText(userInput);
+        if (translatedText) {
+            document.getElementById("query-input").value = translatedText;
+            appendToConsole("Перевод выполнен успешно.");
+        } else {
+            appendToConsole("Ошибка при переводе текста.");
+        }
+    });
+
+    document.getElementById("api-key-button").addEventListener("click", () => {
+        const apiKey = prompt("Введите API ключ:");
+        if (apiKey) {
+            API_KEY = apiKey;
+            localStorage.setItem('api_key', API_KEY);
+            appendToConsole("API ключ успешно принят и сохранен.");
+        } else {
+            appendToConsole("API ключ не введен.");
+        }
+    });
+
+    function sendRequest(apiType, retries = 0) {
+        const userInput = document.getElementById("query-input").value;
+        if (!userInput.trim()) {
+            appendToConsole("Пожалуйста, введите запрос.");
+            return;
+        }
+
+        appendToConsole(`Отправка запроса через ${apiType}: "${userInput}"...`);
+
+        if (apiType === "schnell") {
+            pendingRequestsCountSchnell++;
+            updateRequestCountText("schnell");
+        } else {
+            pendingRequestsCountDev++;
+            updateRequestCountText("dev");
+        }
+
+        const payload = { inputs: userInput, randomSeed: generateRandomSeed() };
+        const apiUrl = API_URLS[apiType];
+
+        fetch(apiUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => {
+            if (apiType === "schnell") {
+                pendingRequestsCountSchnell--;
+                updateRequestCountText("schnell");
+            } else {
+                pendingRequestsCountDev--;
+                updateRequestCountText("dev");
+            }
+
+            if (response.ok) {
+                return response.blob();
+            } else if (response.status >= 500) {
+                throw new Error(`Ошибка ${response.status}`);
+            } else {
+                throw new Error(`Ошибка: ${response.status} - ${response.statusText}`);
+            }
+        })
+        .then(imageBlob => {
+            displayImage(URL.createObjectURL(imageBlob), apiType);
+            appendToConsole("Изображение успешно загружено.");
+        })
+        .catch(error => {
+            if (error.message.includes("500") && retries < 5) {
+                appendToConsole(`Ошибка 500. Повторная попытка запроса (${retries + 1})...`);
+                sendRequest(apiType, retries + 1);
+            } else {
+                appendToConsole(`Ошибка при выполнении запроса: ${error.message}`);
+            }
+        });
+    }
+
+    function displayImage(imageUrl, apiType) {
+        imageCount++;
+
+        const container = document.createElement("div");
+        container.className = "image-wrapper";
+
+        const img = document.createElement("img");
+        img.src = imageUrl;
+        img.alt = `Изображение ${imageCount}`;
+        img.addEventListener("click", () => saveImage(imageUrl));
+
+        const label = document.createElement("span");
+        label.textContent = `№${imageCount} (API: ${apiType})`;
+
+        container.appendChild(img);
+        container.appendChild(label);
+        document.getElementById("image-container").appendChild(container);
+    }
+
+    function saveImage(imageUrl) {
+        const link = document.createElement("a");
+        link.href = imageUrl;
+        link.download = `Image_${new Date().toISOString().replace(/[:.]/g, '_')}.png`;
+        link.click();
+        appendToConsole("Изображение сохранено.");
+    }
+
+    async function translateText(text) {
+        const sourceLang = "ru";
+        const targetLang = "en";
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            return data[0][0][0];
+        } catch (error) {
+            console.error("Ошибка при переводе:", error);
+            return null;
+        }
+    }
+
+    function generateRandomSeed() {
+        return Math.floor(Math.random() * 1000000);
+    }
+
+    function updateRequestCountText(apiType) {
+        const countText = apiType === "schnell" ? `Ждем: ${pendingRequestsCountSchnell}` : `Ждем: ${pendingRequestsCountDev}`;
+        document.getElementById(`request-count-text-${apiType}`).textContent = countText;
+    }
+
+    function appendToConsole(message) {
+        const consoleOutput = document.getElementById("console-output");
+        consoleOutput.value += `${new Date().toLocaleTimeString()}: ${message}\n`;
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+</script>
+</body>
+</html>
