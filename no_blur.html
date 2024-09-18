@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -93,6 +94,15 @@
             justify-content: center;
         }
 
+        #api-key-button {
+            min-width: 160px; /* Ширина кнопки с API ключом */
+            flex: none;
+        }
+
+        #translate-button {
+            min-width: 150px; /* Ширина кнопки перевода */
+        }
+
         .button-text {
             margin: 0;
             font-size: 16px;
@@ -112,8 +122,12 @@
             <span class="button-text">Перевести</span>
         </button>
         <button id="submit-button-schnell">
-            <span class="button-text">Отправить (no blur)</span>
+            <span class="button-text">Отправить (schnell)</span>
             <span class="request-count" id="request-count-text-schnell">Ждем: 0</span>
+        </button>
+        <button id="submit-button-dev">
+            <span class="button-text">Отправить (dev no blur)</span>
+            <span class="request-count" id="request-count-text-dev">Ждем: 0</span>
         </button>
         <button id="api-key-button">Принять API ключ</button>
     </div>
@@ -123,7 +137,7 @@
 
 <script>
     const API_URLS = {
-        schnell: "https://api-inference.huggingface.co/models/Shakker-Labs/FLUX.1-dev-LoRA-AntiBlur",
+        schnell: "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
         dev: "https://api-inference.huggingface.co/models/Shakker-Labs/FLUX.1-dev-LoRA-AntiBlur"
     };
     let API_KEY = localStorage.getItem('api_key') || ""; // Хранение API ключа в localStorage
@@ -175,14 +189,14 @@
             return;
         }
 
-        appendToConsole(`Отправка запроса через "no blur": "${userInput}"...`);
+        appendToConsole(`Отправка запроса через ${apiType}: "${userInput}"...`);
 
         if (apiType === "schnell") {
             pendingRequestsCountSchnell++;
             updateRequestCountText("schnell");
         } else {
             pendingRequestsCountDev++;
-            updateRequestCountText("dev");
+            updateRequestCountText("dev no blur");
         }
 
         const payload = { inputs: userInput, randomSeed: generateRandomSeed() };
@@ -239,7 +253,7 @@
         img.addEventListener("click", () => saveImage(imageUrl));
 
         const label = document.createElement("span");
-        label.textContent = `№${imageCount} (API: no blur)`;
+        label.textContent = `№${imageCount} (API: ${apiType})`;
 
         container.appendChild(img);
         container.appendChild(label);
