@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hugging Face FLUX.1 NO BLUR (Nebius Dev)</title>
+  <style>
+    body { background:#1E1E1E; color:#E0E0E0; font-family:Arial,sans-serif; margin:0; padding:0 }
+    #main-container { position:fixed; top:0; left:50%; transform:translateX(-50%); width:100%; max-width:700px;
+      padding:20px; background:rgba(30,30,30,0.8); backdrop-filter:blur(10px); display:flex; flex-direction:column;
+      gap:20px; z-index:1000; box-sizing:border-box }
+    textarea, button {
+      background:rgba(46,46,46,0.4); backdrop-filter:blur(10px); color:#E0E0E0; border:1px solid #444;
+      font-size:18px; padding:10px; text-align:center; box-sizing:border-box; resize:none; border-radius:5px
+    }
+    button:hover { background:rgba(255,255,255,0.1); color:#555 }
+    #query-input { width:100% }
+    .button-container { display:flex; flex-wrap:wrap; gap:10px; align-items:center }
+    button { flex:1 1 150px; min-width:150px; height:60px; display:flex; flex-direction:column;
+      justify-content:center; align-items:center }
+    #api-key-button { flex:none; min-width:160px }
+    .request-count { font-size:14px; margin-top:5px }
+    .notification { background:#444; color:#E0E0E0; padding:10px; border-radius:5px;
+      margin:5px 0; display:none }
+    #image-container { margin-top:230px; border:1px solid #444; padding:10px; box-sizing:border-box;
+      display:flex; flex-direction:column; gap:10px }
+    .image-wrapper { display:flex; flex-direction:column; align-items:center; gap:10px }
+    .image-wrapper img { width:100%; max-width:700px; height:auto; object-fit:contain; cursor:pointer }
+  </style>
+</head>
+<body>
+  <div id="main-container">
+    <textarea id="query-input" placeholder="Введите запрос..." rows="4"></textarea>
+    <div class="button-container">
+      <button id="translate-button"><span>Перевести</span></button>
+      <button id="submit-button-schnell">
+        <span>Отправить (schnell)</span>
+        <span class="request-count" id="request-count-text-schnell">Ждем: 0</span>
+      </button>
+      <button id="submit-button-dev">
+        <span>Отправить (dev)</span>
+        <span class="request-count" id="request-count-text-dev">Ждем: 0</span>
+      </button>
+      <button id="api-key-button">Принять API ключ</button>
+    </div>
+  </div>
+
+  <div id="image-container"></div>
+  <div id="notification-container"></div>
+
+  <script type="module">
+    import { InferenceClient } from 'https://esm.sh/@huggingface/inference';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const MODEL_ID_DEV    = 'black-forest-labs/FLUX.1-dev';
+      const PROVIDER_DEV    = 'nebius';
+      const API_URL_SCHNELL = 'https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell';
+
+      let API_KEY        = localStorage.getItem('api_key') || '';
+      let client         = API_KEY ? new InferenceClient(API_KEY) : null;
+      let imageCount     = 0;
+      let pendingSchnell = 0;
+      let pendingDev     = 0;
+
+      const el = id => document.getElementById(id);
+
+      el('api-key-button').addEventListener('click', () => {
+        const key = prompt('Введите API ключ:');
+        if (key) {
+          API_KEY = key;
+          localStorage.setItem('api_key', key);
+          client = new InferenceClient(API_KEY);
+          showNotification('API ключ принят и сохранен.');
+        } else {
+          showNotification('API ключ не введен.');
+        }
+      });
+
+      el('submit-button-schnell').addEventListener('click', () => sendRequest('schnell'));
+      el('submit-button-dev')   .addEventListener('click', () => sendRequest('dev'));
+      el('translate-button')   .addEventListener('click', async () => {
+        const txt = el('query-input').value.trim();
+        if (!txt) return showNotification('Введите текст для перевода.');
+        showNotification(`Перевод: "${txt}"...`);
+        const t = await translateText(txt);
+        if (t) {
+          el('query-input').value = t;
+          showNotification('Перевод выполнен.');
+        } else {
+          showNotification('Ошибка при переводе.');
+        }
+      });
+
+      async function sendRequest(type) {
+        const prompt = el('query-input').value.trim();
+        if (!prompt) return showNotification('Введите запрос.');
+
+        showNotification(`Запрос ${type}: "${prompt}"...`);
+        if (type === 'schnell') {
+          pendingSchnell++; updateCounts();
+          try {
+            const res = await fetch(API_URL_SCHNELL, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ inputs: prompt, randomSeed: Math.floor(Math.random()*1000) })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            displayImage(URL.createObjectURL(blob), 'schnell');
+            showNotification('Загружено (schnell).');
+          } catch (e) {
+            showNotification(`Ошибка (schnell): ${e.message}`);
+          } finally {
+            pendingSchnell--; updateCounts();
+          }
+
+        } else {
+          if (!client) return showNotification('API ключ не задан.');
+          pendingDev++; updateCounts();
+          try {
+            // Новый Dev-вызов через Nebius:
+            const blob = await client.textToImage({
+              model:    MODEL_ID_DEV,
+              provider: PROVIDER_DEV,
+              inputs:   prompt
+            });
+            displayImage(URL.createObjectURL(blob), 'dev');
+            showNotification('Загружено (dev).');
+          } catch (e) {
+            showNotification(`Ошибка (dev): ${e.message}`);
+          } finally {
+            pendingDev--; updateCounts();
+          }
+        }
+      }
+
+      function displayImage(src, apiType) {
+        imageCount++;
+        const w = document.createElement('div'); w.className = 'image-wrapper';
+        const img = document.createElement('img');
+        img.src = src; img.alt = `От ${apiType}`; img.onclick = () => saveImage(src);
+        const p = document.createElement('p');
+        p.textContent = `API: ${apiType} | №${imageCount}`;
+        w.append(img, p);
+        el('image-container').append(w);
+      }
+      function saveImage(src) {
+        const a = document.createElement('a');
+        a.href = src;
+        a.download = `img_${new Date().toISOString().replace(/[:.]/g,'_')}.png`;
+        a.click();
+        showNotification('Сохранено.');
+      }
+      function updateCounts() {
+        el('request-count-text-schnell').textContent = `Ждем: ${pendingSchnell}`;
+        el('request-count-text-dev')   .textContent = `Ждем: ${pendingDev}`;
+      }
+      function showNotification(msg) {
+        const n = document.createElement('div');
+        n.className = 'notification';
+        n.textContent = msg;
+        el('notification-container').append(n);
+        n.style.display = 'block';
+        setTimeout(() => n.remove(), 3000);
+      }
+      async function translateText(text) {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ru&tl=en&dt=t&q=${encodeURIComponent(text)}`;
+        try {
+          const r = await fetch(url), d = await r.json();
+          return d[0][0][0];
+        } catch {
+          return null;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
